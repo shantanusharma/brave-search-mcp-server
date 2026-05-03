@@ -2,6 +2,14 @@ name: Build Release
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: >
+          Optional explicit release semver (e.g. 2.1.0). Must be greater than the
+          version currently published to npm. Leave empty to bump patch from package.json.
+        required: false
+        default: ''
+        type: string
 
 jobs:
   publish:
@@ -40,9 +48,37 @@ jobs:
 
       - name: Bump version
         id: bump-version
+        env:
+          EXPLICIT_VERSION: ${{ inputs.version }}
         run: |
-          TAG=$(npm version patch --no-git-tag-version)
-          VERSION=${TAG#v}
+          set -euo pipefail
+          PKG=$(node -p "require('./package.json').name")
+          PKG_JSON_VERSION=$(node -p "require('./package.json').version")
+          EXPLICIT_RAW=$(printf '%s' "${EXPLICIT_VERSION:-}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+          if [ -z "$EXPLICIT_RAW" ]; then
+            TAG=$(npm version patch --no-git-tag-version)
+            VERSION=${TAG#v}
+          else
+            NPM_LATEST=$(npm view "$PKG" version) || {
+              printf 'Package name (raw): %q\n' "$PKG" >&2
+              echo "::error::Could not read the published version for comparison from npm (see log for package name)."
+              exit 1
+            }
+            CLEANED=$(node -e "const semver=require('semver');const c=semver.clean(process.argv[1]);if(!c){process.exit(1)};process.stdout.write(c)" "$EXPLICIT_RAW") || {
+              printf 'Received explicit version input (raw): %q\n' "$EXPLICIT_RAW" >&2
+              echo "::error::Invalid semver for explicit version (see log for raw value)."
+              exit 1
+            }
+            node -e "const semver=require('semver');const exp=process.argv[1];const latest=process.argv[2];const pkg=process.argv[3];\
+              if(!semver.gt(exp,latest)){console.error('Explicit version',exp,'must be greater than npm latest',latest);process.exit(1);}\
+              if(semver.lt(exp,pkg)){console.error('Explicit version',exp,'must not be less than package.json version',pkg);process.exit(1);}" \
+              "$CLEANED" "$NPM_LATEST" "$PKG_JSON_VERSION"
+            npm version "$CLEANED" --no-git-tag-version --allow-same-version
+            VERSION="$CLEANED"
+            TAG="v${VERSION}"
+          fi
+
           jq --arg v "$VERSION" '(.version,.packages[].version) = $v' server.json > tmp && mv tmp server.json
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
