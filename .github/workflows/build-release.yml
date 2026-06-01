@@ -180,8 +180,17 @@ jobs:
       # Publish to MCP Registry
       # Reference: https://github.com/modelcontextprotocol/registry/blob/main/docs/guides/publishing/publish-server.md
       - name: Install MCP Publisher
+        env:
+          MCP_PUBLISHER_VERSION: v1.7.9
         run: |
-          curl -L "https://github.com/modelcontextprotocol/registry/releases/download/v1.7.9/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          set -euo pipefail
+          FILENAME="mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz"
+          CHECKSUMS_FILE="registry_${MCP_PUBLISHER_VERSION#v}_checksums.txt"
+          BASE_URL="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
+          curl -fSL "${BASE_URL}/${FILENAME}" -o "${FILENAME}"
+          curl -fSL "${BASE_URL}/${CHECKSUMS_FILE}" -o checksums.txt
+          grep -E "  ${FILENAME}$" checksums.txt | sha256sum -c
+          tar xzf "${FILENAME}" mcp-publisher
 
       - name: Login to MCP Registry
         run: ./mcp-publisher login github-oidc
